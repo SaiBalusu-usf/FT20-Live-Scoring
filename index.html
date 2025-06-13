@@ -29,9 +29,9 @@
 
     .scoreboard-overlay {
       position: fixed;
-      top: 50%;
+      top: 20px;
       left: 50%;
-      transform: translate(-50%, -50%);
+      transform: translateX(-50%);
       width: 95%;
       max-width: 1200px;
       background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(240, 248, 255, 0.95), rgba(219, 234, 254, 0.95));
@@ -281,7 +281,7 @@
 
     <div id="scoreboardContent" style="display: none;">
       <div class="logo-container">
-        <img src="https://raw.githubusercontent.com/SaiBalusu-usf/FT20-Live-Scoring/main/icat%20ft20.jpg" alt="ICAT Friendship T20 League Logo">
+        <img src="icatft20.jpg" alt="ICAT Friendship T20 League Logo">
       </div>
       
       <div class="main-score-bar">
@@ -398,7 +398,7 @@
         MATCH_ID = document.getElementById('matchIdInput').value || MATCH_ID;
 
         // Create the target URL - using the working endpoint
-        const targetUrl = `https://cricclubs.com/FT20/ballbyball.do?matchId=${MATCH_ID}&clubId=${CLUB_ID}`;
+        const targetUrl = `https://cricclubs.com/FT20/viewScorecard.do?matchId=${MATCH_ID}&clubId=${CLUB_ID}`;
         
         console.log('Fetching data from:', targetUrl);
           
@@ -522,16 +522,92 @@
       return "Team 2"; // Default value
     }
 
-    // Extract current score from HTML (from working index.html)
+    // Extract current score from HTML - improved to get both teams' scores
     function extractCurrentScore(doc) {
+      // Try to extract from page title first (most reliable)
+      const title = doc.title;
+      console.log('Page title for score extraction:', title);
+      
+      // More specific regex to avoid matching overs - look for scores before " ("
+      const titleScoreMatches = title.match(/(\w+)\s+(\d{1,3}\/\d{1,2})\s+\(/g);
+      if (titleScoreMatches && titleScoreMatches.length >= 2) {
+        // Extract just the score part from each match
+        const scores = titleScoreMatches.map(match => {
+          const scoreMatch = match.match(/(\d{1,3}\/\d{1,2})/);
+          return scoreMatch ? scoreMatch[1] : "0/0";
+        });
+        console.log('Extracted scores from title (improved):', scores);
+        return scores;
+      }
+      
+      // Fallback: try simpler pattern
+      const simpleScoreMatches = title.match(/\b\d{1,3}\/\d{1,2}\b/g);
+      if (simpleScoreMatches && simpleScoreMatches.length >= 2) {
+        // Filter out overs-like patterns (containing decimal points in context)
+        const actualScores = simpleScoreMatches.filter((score, index, arr) => {
+          // Check if this score is likely an actual score vs overs
+          const scoreIndex = title.indexOf(score);
+          const beforeScore = title.substring(Math.max(0, scoreIndex - 10), scoreIndex);
+          const afterScore = title.substring(scoreIndex + score.length, scoreIndex + score.length + 10);
+          
+          // If it's surrounded by decimal numbers, it's likely part of overs
+          return !beforeScore.includes('.') || !afterScore.includes('.');
+        });
+        
+        if (actualScores.length >= 2) {
+          console.log('Extracted scores from title (filtered):', actualScores);
+          return actualScores;
+        }
+      }
+
+      // Fallback to body text extraction
       const matches = doc.body.textContent.matchAll(/\d{1,3}\/\d{1,2}/g);
-      return Array.from(matches, m => m[0]);
+      const scoresArray = Array.from(matches, m => m[0]);
+      console.log('Extracted scores from body:', scoresArray);
+      
+      // If we have at least 2 scores, return them
+      if (scoresArray.length >= 2) {
+        return scoresArray;
+      }
+      
+      // If only one found, return it with a default for the second team
+      if (scoresArray.length === 1) {
+        return [scoresArray[0], "0/0"];
+      }
+      
+      return ["0/0", "0/0"];
     }
 
-    // Extract current overs from HTML (from working index.html)
+    // Extract current overs from HTML - improved to get both teams' overs
     function extractCurrentOvers(doc) {
+      // Try to extract from page title first (most reliable)
+      const title = doc.title;
+      const titleOversMatches = title.match(/\(([^)]+ov)\)/g);
+      if (titleOversMatches && titleOversMatches.length >= 2) {
+        return titleOversMatches.map(match => match.replace(/[()]/g, ''));
+      }
+
+      // Fallback to body text extraction
       const matches = doc.body.textContent.matchAll(/\d{1,2}\.\d\s*\/\s*\d{1,2}\s*ov/g);
-      return Array.from(matches, m => m[0]);
+      const oversArray = Array.from(matches, m => m[0]);
+      
+      // If we have at least 2 overs, return them
+      if (oversArray.length >= 2) {
+        return oversArray;
+      }
+      
+      // If only one found, try to find the second team's overs differently
+      if (oversArray.length === 1) {
+        // Look for pattern like "0.2/2.0 ov" in the title or content
+        const alternatePattern = /\d{1,2}\.\d\s*\/\s*\d{1,2}\.\d\s*ov/g;
+        const alternateMatches = Array.from(doc.body.textContent.matchAll(alternatePattern), m => m[0]);
+        if (alternateMatches.length > 0) {
+          return [oversArray[0], alternateMatches[0]];
+        }
+        return [oversArray[0], "0.0 overs"];
+      }
+      
+      return ["0.0 overs", "0.0 overs"];
     }
 
     // Extract batsmen information (from working index.html)
@@ -671,19 +747,23 @@
       document.getElementById('scoreboardContent').style.display = 'block';
       document.getElementById('scoreboardContent').classList.add('no-display');
 
-      // Update main scores
-      document.getElementById('battingTeamName').textContent = battingTeam;
-      document.getElementById('battingTeamScore').textContent = currentScore[0] || "0/0";
-      document.getElementById('battingTeamOvers').textContent = currentOvers[0] || "0.0 overs";
-      document.getElementById('battingTeamOvers').classList.add('fade-in');
-      document.getElementById('battingTeamScore').classList.add('fade-in');
+      // Update main scores - corrected to match CricClubs exactly
+      document.getElementById("battingTeamName").textContent = battingTeam;
+      document.getElementById("battingTeamScore").textContent = currentScore[1] || "0/0"; // Fixed: now assigns ICAT's score
+      document.getElementById("battingTeamOvers").textContent = currentOvers[1] || "0.0 overs"; // Correct for ICAT
+      document.getElementById("battingTeamOvers").classList.add("fade-in");
+      document.getElementById("battingTeamScore").classList.add("fade-in");
+      
+      console.log('ICAT (batting team) assigned score:', currentScore[1], 'overs:', currentOvers[1]);
 
-      // Update main scores for bowling team
-      document.getElementById('bowlingTeamName').textContent = bowlingTeam;
-      document.getElementById('bowlingTeamScore').textContent = currentScore[1] || "0/0";
-      document.getElementById('bowlingTeamOvers').textContent = currentOvers[1] || "0.0 overs";
-      document.getElementById('bowlingTeamOvers').classList.add('fade-in');
-      document.getElementById('bowlingTeamScore').classList.add('fade-in');
+      // Update main scores for bowling team - corrected to match CricClubs exactly
+      document.getElementById("bowlingTeamName").textContent = bowlingTeam;
+      document.getElementById("bowlingTeamScore").textContent = currentScore[0] || "0/0"; // Fixed: now assigns Icat Stallionz's score
+      document.getElementById("bowlingTeamOvers").textContent = currentOvers[0] || "0.0 overs"; // Correct for Icat Stallionz
+      document.getElementById("bowlingTeamOvers").classList.add("fade-in");
+      document.getElementById("bowlingTeamScore").classList.add("fade-in");
+      
+      console.log('Icat Stallionz (bowling team) assigned score:', currentScore[0], 'overs:', currentOvers[0]);
 
       // Update batsmen display
       const batsmenContainer = document.getElementById('batsmenContainer');
